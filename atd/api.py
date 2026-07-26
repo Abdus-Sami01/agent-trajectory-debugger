@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from atd.analysis import analyze
+from atd.diff import diff_traces
 from atd.store import TraceStore
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -23,20 +24,22 @@ def get_store() -> TraceStore:
 
 @app.get("/api/traces")
 def list_traces(store: TraceStore = Depends(get_store)) -> dict:
-    out = []
-    for trace_id in store.list_ids():
-        trace = store.load(trace_id)
-        errors = len([s for s in trace.spans if s.status != "ok"])
-        out.append(
-            {
-                "trace_id": trace_id,
-                "spans": len(trace.spans),
-                "duration_ms": round(trace.duration_ms, 3),
-                "errors": errors,
-                "source": trace.metadata.get("source", ""),
-            }
-        )
-    return {"traces": out}
+    return {"traces": store.summaries()}
+
+
+@app.get("/api/diff")
+def get_diff(
+    baseline: str,
+    candidate: str,
+    threshold: float = 0.20,
+    store: TraceStore = Depends(get_store),
+) -> dict:
+    try:
+        base = store.load(baseline)
+        cand = store.load(candidate)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return diff_traces(base, cand, threshold)
 
 
 @app.get("/api/traces/{trace_id}")

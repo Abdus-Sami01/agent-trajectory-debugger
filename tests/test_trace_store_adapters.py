@@ -100,3 +100,32 @@ def test_from_openai_messages_nests_tool_calls():
     assert kinds[0] == ("assistant", "llm", "")
     assert kinds[1] == ("search", "tool", trace.spans[0].span_id)
     assert kinds[2][0] == "search"
+
+
+def test_from_agentflow_uses_real_timestamps_when_present():
+    payload = {
+        "workflow_id": "wf",
+        "nodes": {
+            "a": {"status": "completed", "elapsed_ms": 120.0, "started_ms": 33.1, "ended_ms": 153.1},
+            "b": {"status": "completed", "elapsed_ms": 120.0, "started_ms": 33.4, "ended_ms": 153.4},
+        },
+    }
+    trace = from_agentflow(payload)
+    assert trace.metadata["timeline"] == "real"
+    assert trace.spans[0].start_ms == 33.1
+    assert trace.spans[1].start_ms == 33.4
+    # overlapping spans mean wall-clock is less than the sum of durations
+    assert trace.duration_ms < sum(s.duration_ms for s in trace.spans)
+
+
+def test_from_agentflow_falls_back_when_timestamps_absent():
+    payload = {
+        "workflow_id": "wf",
+        "nodes": {
+            "a": {"status": "completed", "elapsed_ms": 10.0},
+            "b": {"status": "completed", "elapsed_ms": 20.0},
+        },
+    }
+    trace = from_agentflow(payload)
+    assert trace.metadata["timeline"] == "synthesized-sequential"
+    assert trace.spans[1].start_ms == 10.0

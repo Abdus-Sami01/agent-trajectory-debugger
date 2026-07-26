@@ -22,32 +22,43 @@ _KIND_BY_NODE_TYPE = {
 def from_agentflow(payload: dict[str, Any]) -> Trace:
     """Convert agentflow's workflow_to_dict output into a Trace.
 
-    agentflow records per-node elapsed_ms but no absolute timestamps, so spans are
-    laid out sequentially in dict order. Durations are real; start offsets are
-    synthesized and do NOT reflect actual concurrency.
+    agentflow >=0.2 records started_ms/ended_ms per node, so the timeline shows real
+    concurrency. Older payloads carry only elapsed_ms; those are laid out sequentially
+    and marked timeline="synthesized-sequential" - durations real, start offsets are not.
     """
+    nodes = payload.get("nodes", {})
+    has_real_timing = any(
+        "started_ms" in node and "ended_ms" in node for node in nodes.values()
+    )
+
     trace = Trace(
         trace_id=payload.get("workflow_id") or "agentflow",
         metadata={
             "source": "agentflow",
             "status": payload.get("status", ""),
             "reported_total_ms": payload.get("total_ms", 0.0),
-            "timeline": "synthesized-sequential",
+            "timeline": "real" if has_real_timing else "synthesized-sequential",
             "final_output": payload.get("final_output"),
         },
     )
 
     cursor = 0.0
-    for index, (name, node) in enumerate(payload.get("nodes", {}).items(), start=1):
+    for index, (name, node) in enumerate(nodes.items(), start=1):
         elapsed = float(node.get("elapsed_ms", 0.0) or 0.0)
+        if has_real_timing and "started_ms" in node:
+            start = float(node.get("started_ms") or 0.0)
+            end = float(node.get("ended_ms") or start + elapsed)
+        else:
+            start, end = cursor, cursor + elapsed
+            cursor += elapsed
         node_type = str(node.get("node_type", "") or "")
         trace.add(
             Span(
                 span_id=f"n{index}",
                 name=name,
                 kind=_KIND_BY_NODE_TYPE.get(node_type, "tool"),
-                start_ms=cursor,
-                end_ms=cursor + elapsed,
+                start_ms=start,
+                end_ms=end,
                 status=_AGENTFLOW_STATUS.get(str(node.get("status", "")), "ok"),
                 output=node.get("output"),
                 error=str(node.get("error", "") or ""),
@@ -58,7 +69,6 @@ def from_agentflow(payload: dict[str, Any]) -> Trace:
                 },
             )
         )
-        cursor += elapsed
 
     return trace
 

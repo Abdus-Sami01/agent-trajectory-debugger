@@ -8,3 +8,5 @@ traces/*.json
 *.egg-info/
 build/
 dist/
+bench_traces/
+traces/_index.json

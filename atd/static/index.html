@@ -115,6 +115,21 @@
     border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px;
   }
   .table-wrap { overflow-x: auto; }
+  select, button {
+    width: 100%; font: inherit; font-size: 12px; padding: 5px 7px; margin-bottom: 5px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px;
+  }
+  button { cursor: pointer; }
+  button:hover { background: var(--panel); }
+  .verdict {
+    display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 4px; letter-spacing: 0.04em;
+  }
+  .verdict.ok { color: var(--ok); border: 1px solid var(--ok); }
+  .verdict.regressed { color: var(--err); border: 1px solid var(--err); }
+  .delta.up { color: var(--err); }
+  .delta.down { color: var(--ok); }
   @media (max-width: 720px) {
     .layout { grid-template-columns: minmax(0, 1fr); }
     .sidebar {
@@ -136,6 +151,10 @@
   <aside class="sidebar">
     <h2>Traces</h2>
     <div id="traces"></div>
+    <h2 style="margin-top:16px">Compare</h2>
+    <select id="baseline" title="baseline trace"></select>
+    <button id="cmp" type="button">Diff vs selected</button>
+    <button id="clearcmp" type="button" hidden>Back to trace</button>
   </aside>
   <main id="main"><p class="empty">Loading traces...</p></main>
 </div>
@@ -165,6 +184,8 @@ async function loadTraces() {
     </div>`).join("");
   box.querySelectorAll(".trace-item").forEach(el =>
     el.onclick = () => selectTrace(el.dataset.id));
+  $("baseline").innerHTML = d.traces.map(t =>
+    `<option value="${esc(t.trace_id)}">${esc(t.trace_id)}</option>`).join("");
   selectTrace(d.traces[0].trace_id);
 }
 
@@ -283,6 +304,69 @@ function showSpan(id) {
     h += `<div class="k">Metadata</div><pre>${esc(j(sp.metadata))}</pre>`;
   $("detail").innerHTML = h;
 }
+
+function renderDiff(d) {
+  const t = d.totals;
+  const sign = (v, unit) => `${v > 0 ? "+" : ""}${fmt(v)}${unit || ""}`;
+  const cls = (v) => v > 0 ? "up" : v < 0 ? "down" : "";
+  const pct = t.duration_pct === null ? "" : ` (${(t.duration_pct * 100).toFixed(1)}%)`;
+
+  let h = `<div style="margin-bottom:16px">
+    <span class="verdict ${d.verdict}">${d.verdict.toUpperCase()}</span>
+    <span style="margin-left:8px;font-family:var(--mono);font-size:12px">
+      ${esc(d.baseline_id)} &rarr; ${esc(d.candidate_id)}</span></div>`;
+
+  h += `<section><h3>Totals</h3><div class="table-wrap"><table>
+    <tr><th>Metric</th><th>Baseline</th><th>Candidate</th><th>Delta</th></tr>
+    <tr><td>Duration</td><td class="num">${fmt(t.duration_before_ms)}ms</td>
+      <td class="num">${fmt(t.duration_after_ms)}ms</td>
+      <td class="num delta ${cls(t.duration_delta_ms)}">${sign(t.duration_delta_ms, "ms")}${pct}</td></tr>
+    <tr><td>Errors</td><td class="num">${t.errors_before}</td><td class="num">${t.errors_after}</td>
+      <td class="num delta ${cls(t.errors_after - t.errors_before)}">${sign(t.errors_after - t.errors_before)}</td></tr>
+    <tr><td>Spans</td><td class="num">${t.spans_before}</td><td class="num">${t.spans_after}</td>
+      <td class="num delta ${cls(t.spans_after - t.spans_before)}">${sign(t.spans_after - t.spans_before)}</td></tr>
+    <tr><td>Tokens</td><td class="num">${t.tokens_before}</td><td class="num">${t.tokens_after}</td>
+      <td class="num delta ${cls(t.tokens_after - t.tokens_before)}">${sign(t.tokens_after - t.tokens_before)}</td></tr>
+    <tr><td>Cost</td><td class="num">$${t.cost_before_usd.toFixed(4)}</td>
+      <td class="num">$${t.cost_after_usd.toFixed(4)}</td>
+      <td class="num delta ${cls(t.cost_delta_usd)}">${t.cost_delta_usd > 0 ? "+" : ""}$${t.cost_delta_usd.toFixed(4)}</td></tr>
+  </table></div></section>`;
+
+  h += `<section><h3>Regressions</h3>`;
+  h += d.regressions.length ? d.regressions.map(r => {
+    const marks = [];
+    if (r.slower) marks.push(`${(r.duration_pct * 100).toFixed(0)}% slower`);
+    if (r.newly_failing) marks.push(`errors ${r.errors_before} to ${r.errors_after}`);
+    if (r.more_calls) marks.push(`calls ${r.calls_before} to ${r.calls_after}`);
+    return `<div class="finding error"><div class="t">${esc(r.name)}</div>
+      <div class="d">${marks.join(" - ")} (${fmt(r.duration_before_ms)}ms to ${fmt(r.duration_after_ms)}ms)</div></div>`;
+  }).join("") : `<p class="empty">No regressions.</p>`;
+  h += `</section>`;
+
+  if (d.added.length || d.removed.length) {
+    h += `<section><h3>Structure</h3>`;
+    d.added.forEach(a => h += `<div class="finding"><div class="t">Added: ${esc(a.name)}</div>
+      <div class="d">${a.calls} calls, ${fmt(a.duration_ms)}ms</div></div>`);
+    d.removed.forEach(r => h += `<div class="finding"><div class="t">Removed: ${esc(r.name)}</div>
+      <div class="d">was ${r.calls} calls, ${fmt(r.duration_ms)}ms</div></div>`);
+    h += `</section>`;
+  }
+
+  h += `<p class="empty">${d.unchanged_count} step(s) unchanged.</p>`;
+  $("main").innerHTML = h;
+  $("sub").textContent = `diff: ${d.baseline_id} vs ${d.candidate_id}`;
+  $("clearcmp").hidden = false;
+}
+
+$("cmp").onclick = async () => {
+  const baseline = $("baseline").value;
+  if (!baseline || !current) return;
+  const r = await fetch(`/api/diff?baseline=${encodeURIComponent(baseline)}&candidate=${encodeURIComponent(current)}`);
+  if (!r.ok) { $("main").innerHTML = `<p class="empty">Diff failed.</p>`; return; }
+  renderDiff(await r.json());
+};
+
+$("clearcmp").onclick = () => { $("clearcmp").hidden = true; render(); };
 
 loadTraces();
 </script>
