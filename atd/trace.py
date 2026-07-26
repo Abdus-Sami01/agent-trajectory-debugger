@@ -23,6 +23,7 @@ class Span:
     tokens_out: int = 0
     cost_usd: float = 0.0
     model: str = ""
+    depends_on: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property

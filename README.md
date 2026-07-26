@@ -102,11 +102,31 @@ The trace schema is framework-agnostic. Existing adapters:
 
 Timeline fidelity is always reported in `trace.metadata["timeline"]` (`real` / `synthesized-sequential` / `none`) and shown in the UI, rather than being papered over.
 
+## Critical path in a DAG
+
+A workflow node can have several predecessors, which a single `parent_id` cannot express. Spans therefore carry `depends_on: list[str]`, and when any span has dependencies the critical path becomes a real longest-path computation over the DAG.
+
+Pass the DAG to agentflow's serializer to get the edges:
+
+```python
+payload = workflow_to_dict(result, dag=builder.dag)
+trace = from_agentflow(payload)
+```
+
+For a `start -> (fast 30ms | slow 150ms) -> join -> finish` workflow:
+
+| Edges supplied | Critical path |
+|---|---|
+| no | `slow_branch` (degenerate — longest single span) |
+| yes | `start -> slow_branch -> join -> finish` |
+
+The fast parallel branch is correctly excluded. Without dependency edges the analysis falls back to walking `parent_id`, and a trace with neither degenerates to its longest span.
+
 ## Known limitations
 
-- **Critical path needs hierarchy.** It walks `parent_id` links. Adapters that produce a flat span list (agentflow, which reports nodes without parent/child structure) degenerate to "longest single span". Traces recorded via `Recorder`, which nests spans, get a true path.
 - **Cost is only as good as the token counts** you record. Spans without `tokens_in`/`tokens_out` contribute nothing to the rollup.
 - **No streaming yet** — traces are read from disk, so a run must finish before you inspect it.
+- **Cyclic `depends_on` is tolerated, not resolved.** A cycle would make "longest path" unbounded, so traversal breaks the loop and returns a valid partial chain rather than hanging.
 
 ## Schema
 

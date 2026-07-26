@@ -129,3 +129,35 @@ def test_from_agentflow_falls_back_when_timestamps_absent():
     trace = from_agentflow(payload)
     assert trace.metadata["timeline"] == "synthesized-sequential"
     assert trace.spans[1].start_ms == 10.0
+
+
+def test_from_agentflow_maps_edges_to_depends_on():
+    payload = {
+        "workflow_id": "wf",
+        "nodes": {
+            "start": {"status": "completed", "elapsed_ms": 10.0},
+            "a": {"status": "completed", "elapsed_ms": 20.0},
+            "join": {"status": "completed", "elapsed_ms": 5.0},
+        },
+        "edges": [
+            {"source": "start", "target": "a"},
+            {"source": "a", "target": "join"},
+        ],
+    }
+    trace = from_agentflow(payload)
+    by_name = {s.name: s for s in trace.spans}
+    assert by_name["start"].depends_on == []
+    assert by_name["a"].depends_on == [by_name["start"].span_id]
+    assert by_name["join"].depends_on == [by_name["a"].span_id]
+
+
+def test_from_agentflow_without_edges_has_no_dependencies():
+    payload = {"workflow_id": "wf", "nodes": {"a": {"status": "completed", "elapsed_ms": 1.0}}}
+    assert from_agentflow(payload).spans[0].depends_on == []
+
+
+def test_span_depends_on_survives_roundtrip():
+    t = Trace(trace_id="rt")
+    t.add(Span("a", "one", "tool", 0, 5))
+    t.add(Span("b", "two", "tool", 5, 9, depends_on=["a"]))
+    assert Trace.from_dict(t.to_dict()).spans[1].depends_on == ["a"]

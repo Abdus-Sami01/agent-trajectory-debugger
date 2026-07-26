@@ -106,3 +106,30 @@ def test_analyze_handles_empty_trace():
     result = analyze(Trace(trace_id="empty"))
     assert result["summary"]["spans"] == 0
     assert result["summary"]["error_rate"] == 0.0
+
+
+def test_critical_path_uses_dag_dependencies_over_parallel_branch():
+    t = Trace(trace_id="dag")
+    t.add(Span("a", "start", "tool", 0, 20))
+    t.add(Span("b", "fast", "tool", 20, 50, depends_on=["a"]))
+    t.add(Span("c", "slow", "tool", 20, 170, depends_on=["a"]))
+    t.add(Span("d", "join", "tool", 170, 175, depends_on=["b", "c"]))
+    assert critical_path(t) == ["a", "c", "d"]
+
+
+def test_critical_path_dag_ignores_unknown_dependency_ids():
+    t = Trace(trace_id="dag")
+    t.add(Span("a", "one", "tool", 0, 10, depends_on=["missing"]))
+    t.add(Span("b", "two", "tool", 10, 40, depends_on=["a"]))
+    assert critical_path(t) == ["a", "b"]
+
+
+def test_critical_path_dag_survives_dependency_cycle():
+    t = Trace(trace_id="cyc")
+    t.add(Span("a", "one", "tool", 0, 10, depends_on=["b"]))
+    t.add(Span("b", "two", "tool", 10, 20, depends_on=["a"]))
+    assert len(critical_path(t)) >= 1
+
+
+def test_critical_path_falls_back_to_tree_without_depends_on():
+    assert critical_path(_trace()) == ["a", "c"]

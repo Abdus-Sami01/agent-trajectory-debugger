@@ -42,6 +42,13 @@ def from_agentflow(payload: dict[str, Any]) -> Trace:
         },
     )
 
+    span_id_by_name = {name: f"n{i}" for i, name in enumerate(nodes, start=1)}
+    deps_by_name: dict[str, list[str]] = {name: [] for name in nodes}
+    for edge in payload.get("edges", []):
+        source, target = edge.get("source"), edge.get("target")
+        if source in span_id_by_name and target in deps_by_name:
+            deps_by_name[target].append(span_id_by_name[source])
+
     cursor = 0.0
     for index, (name, node) in enumerate(nodes.items(), start=1):
         elapsed = float(node.get("elapsed_ms", 0.0) or 0.0)
@@ -62,6 +69,7 @@ def from_agentflow(payload: dict[str, Any]) -> Trace:
                 status=_AGENTFLOW_STATUS.get(str(node.get("status", "")), "ok"),
                 output=node.get("output"),
                 error=str(node.get("error", "") or ""),
+                depends_on=deps_by_name.get(name, []),
                 metadata={
                     "attempts": node.get("attempts", 1),
                     "agentflow_status": node.get("status", ""),

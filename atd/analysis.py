@@ -29,8 +29,56 @@ def cost_rollup(trace: Trace) -> dict[str, Any]:
     return {"by_model": {k: dict(v) for k, v in by_model.items()}, "total": total}
 
 
+def _critical_path_dag(trace: Trace) -> list[str]:
+    """Longest-duration chain over depends_on edges.
+
+    A DAG node can have several predecessors, which a single parent_id cannot
+    express, so dependency-carrying traces get a real longest-path computation.
+    """
+    by_id = {s.span_id: s for s in trace.spans}
+    memo: dict[str, tuple[float, list[str]]] = {}
+    visiting: set[str] = set()
+
+    def best_ending_at(span_id: str) -> tuple[float, list[str]]:
+        if span_id in memo:
+            return memo[span_id]
+        span = by_id.get(span_id)
+        if span is None:
+            return (0.0, [])
+        if span_id in visiting:
+            return (0.0, [])
+        visiting.add(span_id)
+
+        best_before, best_chain = 0.0, []
+        for dep in span.depends_on:
+            if dep not in by_id:
+                continue
+            total, chain = best_ending_at(dep)
+            if total > best_before:
+                best_before, best_chain = total, chain
+
+        visiting.discard(span_id)
+        result = (best_before + span.duration_ms, best_chain + [span_id])
+        memo[span_id] = result
+        return result
+
+    best: tuple[float, list[str]] = (0.0, [])
+    for span in trace.spans:
+        candidate = best_ending_at(span.span_id)
+        if candidate[0] > best[0]:
+            best = candidate
+    return best[1]
+
+
 def critical_path(trace: Trace) -> list[str]:
-    """Longest-duration root-to-leaf chain. Where the wall-clock actually went."""
+    """Longest-duration chain. Where the wall-clock actually went.
+
+    Uses depends_on when the trace carries dependency edges, otherwise walks the
+    parent_id tree. A flat trace with neither degenerates to its longest span.
+    """
+    if any(s.depends_on for s in trace.spans):
+        return _critical_path_dag(trace)
+
     memo: dict[str, tuple[float, list[str]]] = {}
 
     def walk(span: Span) -> tuple[float, list[str]]:
