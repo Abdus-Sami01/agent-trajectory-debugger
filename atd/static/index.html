@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Trajectory Debugger</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --panel: #f7f8f9;
+    --border: #e3e5e8;
+    --text: #1a1d21;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --ok: #15803d;
+    --err: #b91c1c;
+    --warn: #b45309;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --panel: #1b1e24; --border: #2b2f37; --text: #e6e8eb;
+      --muted: #9aa1ab; --accent: #60a5fa; --ok: #4ade80; --err: #f87171; --warn: #fbbf24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  header span { color: var(--muted); font-size: 12px; }
+  .layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: calc(100vh - 50px); }
+  .sidebar { border-right: 1px solid var(--border); padding: 12px; overflow-y: auto; }
+  .sidebar h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); margin: 4px 0 10px; font-weight: 600;
+  }
+  .trace-item {
+    padding: 8px 10px; border-radius: 6px; cursor: pointer; margin-bottom: 3px;
+    border: 1px solid transparent;
+  }
+  .trace-item:hover { background: var(--panel); }
+  .trace-item.active { background: var(--panel); border-color: var(--border); }
+  .trace-item .id { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+  .trace-item .meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  main { padding: 20px; overflow-x: hidden; }
+  .stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px; }
+  .stat {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 14px; min-width: 96px;
+  }
+  .stat .label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
+  }
+  .stat .value { font-size: 19px; font-weight: 600; font-family: var(--mono); margin-top: 3px; }
+  .stat .value.err { color: var(--err); }
+  section { margin-bottom: 26px; }
+  section > h3 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted); margin: 0 0 10px; font-weight: 600;
+  }
+  .waterfall { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .row {
+    display: grid; grid-template-columns: minmax(90px, 200px) minmax(0, 1fr) 68px;
+    align-items: center; gap: 10px; padding: 5px 12px;
+    border-bottom: 1px solid var(--border); cursor: pointer;
+  }
+  .row:last-child { border-bottom: none; }
+  .row:hover { background: var(--panel); }
+  .row.sel { background: var(--panel); }
+  .row > * { min-width: 0; }
+  .row .name { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .name .kind {
+    font-family: var(--mono); font-size: 10px; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; margin-right: 6px;
+  }
+  .track { position: relative; height: 16px; background: var(--panel); border-radius: 3px; }
+  .bar { position: absolute; height: 100%; border-radius: 3px; background: var(--accent); min-width: 2px; }
+  .bar.err { background: var(--err); }
+  .bar.crit { outline: 1.5px solid var(--warn); outline-offset: 1px; }
+  .row .dur { font-family: var(--mono); font-size: 11px; color: var(--muted); text-align: right; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  th {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted); font-weight: 600;
+  }
+  td.num { font-family: var(--mono); text-align: right; }
+  .finding {
+    border: 1px solid var(--border); border-left: 3px solid var(--warn);
+    border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel);
+  }
+  .finding.error { border-left-color: var(--err); }
+  .finding .t { font-weight: 600; font-size: 12.5px; }
+  .finding .d { color: var(--muted); font-size: 12px; margin-top: 3px; font-family: var(--mono); }
+  .detail {
+    border: 1px solid var(--border); border-radius: 8px; padding: 14px; background: var(--panel);
+  }
+  .detail pre {
+    margin: 6px 0 0; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
+    word-break: break-word; max-height: 240px; overflow: auto; color: var(--text);
+  }
+  .detail .k {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted); margin-top: 10px;
+  }
+  .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+  code.pill {
+    font-family: var(--mono); font-size: 11px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px;
+  }
+  .table-wrap { overflow-x: auto; }
+  @media (max-width: 720px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    .sidebar {
+      border-right: none; border-bottom: 1px solid var(--border);
+      max-height: 150px;
+    }
+    main { padding: 14px; }
+    .row { grid-template-columns: minmax(70px, 130px) minmax(0, 1fr) 58px; gap: 8px; padding: 5px 8px; }
+    .row .name .kind { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agent Trajectory Debugger</h1>
+  <span id="sub">select a trace</span>
+</header>
+<div class="layout">
+  <aside class="sidebar">
+    <h2>Traces</h2>
+    <div id="traces"></div>
+  </aside>
+  <main id="main"><p class="empty">Loading traces...</p></main>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let current = null, traceData = null, analysisData = null, selectedSpan = null;
+
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => (
+  {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]
+));
+const fmt = (n) => Number(n).toFixed(1);
+
+async function loadTraces() {
+  const r = await fetch("/api/traces");
+  const d = await r.json();
+  const box = $("traces");
+  if (!d.traces.length) {
+    box.innerHTML = '<p class="empty">No traces found.</p>';
+    $("main").innerHTML = '<p class="empty">No traces in the trace directory.</p>';
+    return;
+  }
+  box.innerHTML = d.traces.map(t => `
+    <div class="trace-item" data-id="${esc(t.trace_id)}">
+      <div class="id">${esc(t.trace_id)}</div>
+      <div class="meta">${t.spans} spans - ${fmt(t.duration_ms)}ms${t.errors ? ` - <span style="color:var(--err)">${t.errors} err</span>` : ""}</div>
+    </div>`).join("");
+  box.querySelectorAll(".trace-item").forEach(el =>
+    el.onclick = () => selectTrace(el.dataset.id));
+  selectTrace(d.traces[0].trace_id);
+}
+
+async function selectTrace(id) {
+  current = id; selectedSpan = null;
+  document.querySelectorAll(".trace-item").forEach(el =>
+    el.classList.toggle("active", el.dataset.id === id));
+  const [t, a] = await Promise.all([
+    fetch(`/api/traces/${encodeURIComponent(id)}`).then(r => r.json()),
+    fetch(`/api/traces/${encodeURIComponent(id)}/analysis`).then(r => r.json()),
+  ]);
+  traceData = t; analysisData = a;
+  render();
+}
+
+function render() {
+  const s = analysisData.summary, c = analysisData.cost.total;
+  const critical = new Set(analysisData.critical_path.map(x => x.span_id));
+  const t0 = Math.min(...traceData.spans.map(x => x.start_ms));
+  const span = Math.max(...traceData.spans.map(x => x.end_ms)) - t0 || 1;
+  const synth = traceData.metadata && traceData.metadata.timeline;
+
+  $("sub").textContent = `${current} - ${s.spans} spans, ${fmt(s.duration_ms)}ms`;
+
+  const stat = (l, v, cls) =>
+    `<div class="stat"><div class="label">${l}</div><div class="value ${cls || ""}">${v}</div></div>`;
+
+  let html = `<div class="stats">
+    ${stat("Spans", s.spans)}
+    ${stat("Duration", fmt(s.duration_ms) + "ms")}
+    ${stat("Errors", s.errors, s.errors ? "err" : "")}
+    ${stat("LLM calls", s.llm_calls)}
+    ${stat("Tool calls", s.tool_calls)}
+    ${stat("Tokens", c.tokens_in + c.tokens_out)}
+    ${stat("Cost", "$" + c.cost_usd.toFixed(4))}
+  </div>`;
+
+  if (synth && synth !== "real") {
+    html += `<p class="empty">Timeline is <code class="pill">${esc(synth)}</code> -
+      durations are real, start offsets are not actual concurrency.</p>`;
+  }
+
+  html += `<section><h3>Timeline (orange outline = critical path)</h3><div class="waterfall">`;
+  traceData.spans.forEach(sp => {
+    const left = ((sp.start_ms - t0) / span) * 100;
+    const width = Math.max((sp.duration_ms / span) * 100, 0.4);
+    const bad = sp.status !== "ok";
+    html += `<div class="row" data-span="${esc(sp.span_id)}">
+      <div class="name" title="${esc(sp.name)}"><span class="kind">${esc(sp.kind)}</span>${esc(sp.name)}</div>
+      <div class="track"><div class="bar ${bad ? "err" : ""} ${critical.has(sp.span_id) ? "crit" : ""}"
+        style="left:${left}%;width:${width}%"></div></div>
+      <div class="dur">${fmt(sp.duration_ms)}ms</div>
+    </div>`;
+  });
+  html += `</div></section>`;
+
+  const findings = [];
+  analysisData.stuck_loops.forEach(f => findings.push({
+    cls: "error", t: `Stuck loop: same error ${f.count}x`,
+    d: `${esc(f.error)} - in ${f.names.join(", ")}`
+  }));
+  analysisData.repeated_calls.forEach(f => findings.push({
+    cls: f.all_failed ? "error" : "", t: `Repeated call: ${esc(f.name)} x${f.count}`,
+    d: `${fmt(f.wasted_ms)}ms in redundant retries${f.all_failed ? " - all failed" : ""}`
+  }));
+  analysisData.failures.forEach(f => findings.push({
+    cls: "error", t: `Failure: ${esc(f.name)} (${esc(f.status)})`,
+    d: `${esc(f.error)}${f.propagated_to.length ? " - propagated to " + f.propagated_to.join(" < ") : ""}`
+  }));
+
+  html += `<section><h3>Findings</h3>`;
+  html += findings.length
+    ? findings.map(f => `<div class="finding ${f.cls}"><div class="t">${f.t}</div><div class="d">${f.d}</div></div>`).join("")
+    : `<p class="empty">No failures, stuck loops, or repeated calls detected.</p>`;
+  html += `</section>`;
+
+  if (analysisData.tools.length) {
+    html += `<section><h3>Tools</h3><div class="table-wrap"><table>
+      <tr><th>Tool</th><th>Calls</th><th>Errors</th><th>Error rate</th><th>Total</th><th>Avg</th></tr>`;
+    analysisData.tools.forEach(t => {
+      html += `<tr><td>${esc(t.name)}</td><td class="num">${t.calls}</td>
+        <td class="num" ${t.errors ? 'style="color:var(--err)"' : ""}>${t.errors}</td>
+        <td class="num">${(t.error_rate * 100).toFixed(0)}%</td>
+        <td class="num">${fmt(t.total_ms)}ms</td><td class="num">${fmt(t.avg_ms)}ms</td></tr>`;
+    });
+    html += `</table></div></section>`;
+  }
+
+  html += `<section><h3>Span detail</h3><div class="detail" id="detail">
+    <p class="empty">Click a span in the timeline.</p></div></section>`;
+
+  $("main").innerHTML = html;
+  document.querySelectorAll(".row").forEach(el =>
+    el.onclick = () => showSpan(el.dataset.span));
+  if (selectedSpan) showSpan(selectedSpan);
+}
+
+function showSpan(id) {
+  selectedSpan = id;
+  document.querySelectorAll(".row").forEach(el =>
+    el.classList.toggle("sel", el.dataset.span === id));
+  const sp = traceData.spans.find(x => x.span_id === id);
+  if (!sp) return;
+  const j = (v) => typeof v === "string" ? v : JSON.stringify(v, null, 2);
+  let h = `<div><strong>${esc(sp.name)}</strong>
+    <code class="pill">${esc(sp.kind)}</code>
+    <code class="pill" style="color:${sp.status === "ok" ? "var(--ok)" : "var(--err)"}">${esc(sp.status)}</code>
+    <code class="pill">${fmt(sp.duration_ms)}ms</code>
+    ${sp.model ? `<code class="pill">${esc(sp.model)}</code>` : ""}</div>`;
+  if (sp.error) h += `<div class="k">Error</div><pre style="color:var(--err)">${esc(sp.error)}</pre>`;
+  if (sp.input != null) h += `<div class="k">Input</div><pre>${esc(j(sp.input))}</pre>`;
+  if (sp.output != null) h += `<div class="k">Output</div><pre>${esc(j(sp.output))}</pre>`;
+  if (sp.tokens_in || sp.tokens_out)
+    h += `<div class="k">Tokens</div><pre>in ${sp.tokens_in} / out ${sp.tokens_out} - $${Number(sp.cost_usd).toFixed(6)}</pre>`;
+  if (sp.metadata && Object.keys(sp.metadata).length)
+    h += `<div class="k">Metadata</div><pre>${esc(j(sp.metadata))}</pre>`;
+  $("detail").innerHTML = h;
+}
+
+loadTraces();
+</script>
+</body>
+</html>

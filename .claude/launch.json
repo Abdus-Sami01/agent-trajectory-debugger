@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "atd",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "atd.api:app", "--port", "8011"],
+      "port": 8011
+    }
+  ]
+}
